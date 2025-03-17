@@ -7,21 +7,22 @@ export class Movement {
         this.engine = player.engine;
         
         // Movement parameters - AAA FPS values
-        this.walkSpeed = 6.0; // Higher base speed
-        this.runSpeed = 10.0; // Higher sprint speed
+        this.walkSpeed = 6.0; // Base speed
+        this.runSpeed = 10.0; // Sprint speed
         this.maxSpeed = 12.0; // Cap for absolute maximum speed
         
         // High initial acceleration for responsive feel
         this.groundAcceleration = 150.0; // Very high for instant response
-        this.airAcceleration = 20.0; // Higher for better air control
+        this.airAcceleration = 20.0; // Good air control
         
-        // Very low friction for smoother movement
-        this.groundFriction = 0.5; // Minimal ground friction
-        this.airFriction = 0.05; // Almost no air friction
+        // Deceleration settings
+        this.stopAcceleration = 200.0; // Very high deceleration when no input (Apex-like stop)
+        this.groundFriction = 8.0; // Higher friction for quicker stops
+        this.airFriction = 0.1; // Minimal air friction
         
-        // Directional change handling
-        this.momentumRetention = 0.9; // Keep 90% of momentum when changing direction
-        this.dirChangeBoostMultiplier = 4.0; // Significant boost when changing direction
+        // Directional change handling - reduced momentum retention
+        this.momentumRetention = 0.5; // Keep only 50% momentum when changing direction
+        this.dirChangeBoostMultiplier = 3.0; // Boost for direction changes
         
         // Jump parameters
         this.jumpForce = 7.5; // Higher jump
@@ -46,35 +47,37 @@ export class Movement {
     update(deltaTime) {
         // Get movement input
         const moveInput = this.player.moveInput.clone();
+        const hasInput = moveInput.lengthSq() > 0;
         
-        // Skip if no movement input
-        if (moveInput.lengthSq() === 0) {
-            this.applyFriction(deltaTime);
-            this.lastMoveInput.copy(moveInput);
-            return;
+        if (hasInput) {
+            // Handle active movement
+            // Normalize input if needed
+            if (moveInput.lengthSq() > 1) {
+                moveInput.normalize();
+            }
+            
+            // Calculate movement direction in world space
+            this.calculateMoveDirection(moveInput);
+            
+            // Check for significant direction change
+            this.detectDirectionChange();
+            
+            // Calculate target velocity with speed
+            const speed = this.player.isSprinting ? this.runSpeed : this.walkSpeed;
+            this.targetVelocity.copy(this.moveDirection).multiplyScalar(speed);
+            
+            // Apply acceleration with momentum preservation
+            this.applyAccelerationWithMomentum(deltaTime);
+        } else {
+            // Apply stronger deceleration when no input - Apex-like quick stop
+            this.applyStopForce(deltaTime);
         }
-        
-        // Normalize input if needed
-        if (moveInput.lengthSq() > 1) {
-            moveInput.normalize();
-        }
-        
-        // Calculate movement direction in world space
-        this.calculateMoveDirection(moveInput);
-        
-        // Check for significant direction change
-        this.detectDirectionChange();
-        
-        // Calculate target velocity with speed
-        const speed = this.player.isSprinting ? this.runSpeed : this.walkSpeed;
-        this.targetVelocity.copy(this.moveDirection).multiplyScalar(speed);
-        
-        // Apply acceleration with momentum preservation
-        this.applyAccelerationWithMomentum(deltaTime);
         
         // Save last values for next frame
         this.lastMoveInput.copy(moveInput);
-        this.lastDirection.copy(this.moveDirection);
+        if (this.moveDirection.lengthSq() > 0) {
+            this.lastDirection.copy(this.moveDirection);
+        }
         this.lastSpeed = this.player.physicsBody.velocity.length();
     }
     
@@ -192,25 +195,58 @@ export class Movement {
         }
     }
     
-    applyFriction(deltaTime) {
-        // Skip if not moving
+    /**
+     * Applies a strong stopping force when no input is given (Apex-like quick stop)
+     */
+    applyStopForce(deltaTime) {
         const velocity = this.player.physicsBody.velocity;
         const horizontalVelocity = new Vector3(velocity.x, 0, velocity.z);
         const speed = horizontalVelocity.length();
         
-        if (speed < 0.01) {
+        // If barely moving, just zero out velocity
+        if (speed < 0.1) {
             velocity.x = 0;
             velocity.z = 0;
             return;
         }
         
-        // Calculate appropriate friction
-        let friction = this.player.onGround ? this.groundFriction : this.airFriction;
+        // Calculate stopping acceleration (stronger on ground than in air)
+        const stopAccel = this.player.onGround ? 
+            this.stopAcceleration : this.stopAcceleration * 0.2;
         
-        // Very low friction at high speeds to maintain momentum
-        if (speed > 5.0) {
-            friction *= 0.5;
+        // Calculate how much velocity to remove this frame
+        // Deceleration formula: min(velocity, decelRate * dt)
+        const deceleration = Math.min(speed, stopAccel * deltaTime);
+        
+        // Calculate normalized velocity direction
+        const direction = horizontalVelocity.clone().normalize();
+        
+        // Apply deceleration in the opposite direction of movement
+        velocity.x -= direction.x * deceleration;
+        velocity.z -= direction.z * deceleration;
+    }
+    
+    applyFriction(deltaTime) {
+        // Only called when there is movement input, so use lower friction
+        
+        // Skip if not moving
+        const velocity = this.player.physicsBody.velocity;
+        const horizontalVelocity = new Vector3(velocity.x, 0, velocity.z);
+        const speed = horizontalVelocity.length();
+        
+        if (speed < 0.1) {
+            velocity.x = 0;
+            velocity.z = 0;
+            return;
         }
+        
+        // Reduced friction when there's intentional movement
+        const frictionMultiplier = 0.3; // Only 30% of normal friction
+        
+        // Calculate appropriate friction
+        let friction = this.player.onGround ? 
+            this.groundFriction * frictionMultiplier : 
+            this.airFriction;
         
         // Apply friction as a damping factor
         const damping = Math.max(0, 1 - friction * deltaTime);
