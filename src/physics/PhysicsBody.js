@@ -38,6 +38,9 @@ export class PhysicsBody {
         // Terminal velocity prevention
         this.maxFallSpeed = 30.0; // Maximum fall speed to prevent excessive velocity
         
+        // Stabilization settings
+        this.stabilizeThreshold = 0.01; // Higher threshold to prevent lingering motion
+        
         // Collider
         if (options.radius !== undefined) {
             // Sphere collider
@@ -101,17 +104,28 @@ export class PhysicsBody {
     }
     
     /**
-     * Apply anti-jitter measures to stabilize physics
-     * Very minimal stabilization to maintain feel
+     * Apply anti-jitter measures and stop lingering movement
+     * Higher threshold to match Apex Legends feel
      */
     stabilize() {
-        // Only filter out microscopic movements to prevent jitter
-        // Use extremely small threshold to avoid affecting gameplay
-        const EPSILON = 0.0001; // Much smaller threshold for clean movement
+        // Use higher threshold to prevent lingering movements
+        if (Math.abs(this.velocity.x) < this.stabilizeThreshold) this.velocity.x = 0;
+        if (Math.abs(this.velocity.y) < this.stabilizeThreshold) this.velocity.y = 0;
+        if (Math.abs(this.velocity.z) < this.stabilizeThreshold) this.velocity.z = 0;
         
-        if (Math.abs(this.velocity.x) < EPSILON) this.velocity.x = 0;
-        if (Math.abs(this.velocity.y) < EPSILON) this.velocity.y = 0;
-        if (Math.abs(this.velocity.z) < EPSILON) this.velocity.z = 0;
+        // Additional stabilization to prevent small oscillations on sloped surfaces
+        if (this.onGround) {
+            const horizontalSpeed = Math.sqrt(
+                this.velocity.x * this.velocity.x + 
+                this.velocity.z * this.velocity.z
+            );
+            
+            // If barely moving horizontally while on ground, stop completely
+            if (horizontalSpeed < this.stabilizeThreshold * 2) {
+                this.velocity.x = 0;
+                this.velocity.z = 0;
+            }
+        }
     }
     
     /**
@@ -125,7 +139,7 @@ export class PhysicsBody {
         // Update position from velocity
         this.position.add(this.velocity.clone().multiplyScalar(timeStep));
         
-        // Apply minimal stabilization to prevent jitter
+        // Apply stabilization
         this.stabilize();
         
         // Update collider position
